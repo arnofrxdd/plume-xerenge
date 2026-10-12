@@ -4130,6 +4130,13 @@ namespace plume {
             return;
         }
 
+        // The version of the device itself (see the features query below).
+        {
+            VkPhysicalDeviceProperties chosenProperties = {};
+            vkGetPhysicalDeviceProperties(physicalDevice, &chosenProperties);
+            deviceApiVersion = chosenProperties.apiVersion;
+        }
+
         // Check for extensions.
         uint32_t extensionCount;
         vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, nullptr);
@@ -4224,7 +4231,7 @@ namespace plume {
 
         VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures = {};
         VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures = {};
-        const bool rayTracingFound = (supportedOptionalExtensions.find(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) != supportedOptionalExtensions.end()) && (supportedOptionalExtensions.find(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) != supportedOptionalExtensions.end());
+        const bool rayTracingFound = (deviceApiVersion >= VK_API_VERSION_1_1) && (supportedOptionalExtensions.find(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) != supportedOptionalExtensions.end()) && (supportedOptionalExtensions.find(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) != supportedOptionalExtensions.end());
         if (rayTracingFound) {
             rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
             rayTracingPipelineFeatures.pNext = featuresChain;
@@ -4235,10 +4242,21 @@ namespace plume {
             featuresChain = &accelerationStructureFeatures;
         }
 
+        // The version of the device itself, not of the instance: a Vulkan 1.0
+        // driver (old Mali on Android 10) has no vkGetPhysicalDeviceFeatures2
+        // to call, nor the 1.1 functions VMA asks for at 1.1 and up.
+        // Such a driver has none of the extensions the chain asks about either,
+        // so the plain query leaves them off.
+        const bool vulkan11 = deviceApiVersion >= VK_API_VERSION_1_1;
+
         VkPhysicalDeviceFeatures2 deviceFeatures = {};
         deviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        deviceFeatures.pNext = featuresChain;
-        vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures);
+        if (vulkan11) {
+            deviceFeatures.pNext = featuresChain;
+            vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures);
+        } else {
+            vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures.features);
+        }
 
         // Check for properties.
         if (rayTracingFound) {
@@ -4250,7 +4268,7 @@ namespace plume {
             vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProperties2);
         }
 
-        const bool sampleLocationsFound = supportedOptionalExtensions.find(VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) != supportedOptionalExtensions.end();
+        const bool sampleLocationsFound = (deviceApiVersion >= VK_API_VERSION_1_1) && supportedOptionalExtensions.find(VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) != supportedOptionalExtensions.end();
         if (sampleLocationsFound) {
             sampleLocationProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLE_LOCATIONS_PROPERTIES_EXT;
 
@@ -4443,7 +4461,7 @@ namespace plume {
         allocatorInfo.device = vk;
         allocatorInfo.pVulkanFunctions = &vmaFunctions;
         allocatorInfo.instance = renderInterface->instance;
-        allocatorInfo.vulkanApiVersion = renderInterface->appInfo.apiVersion;
+        allocatorInfo.vulkanApiVersion = std::min(renderInterface->appInfo.apiVersion, VK_MAKE_API_VERSION(0, VK_API_VERSION_MAJOR(deviceApiVersion), VK_API_VERSION_MINOR(deviceApiVersion), 0));
 
         res = vmaCreateAllocator(&allocatorInfo, &allocator);
         if (res != VK_SUCCESS) {
