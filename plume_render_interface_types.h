@@ -1818,6 +1818,10 @@ namespace plume {
         // Shaders: whether they may write SV_ClipDistance (many Mali drivers say no).
         bool clipDistance = true;
 
+        // Block-compressed (BC/DXT) textures. A driver may create one without it - an
+        // Adreno 512 did - and then sample it wrongly.
+        bool textureCompressionBC = true;
+
         // Present.
         bool presentWait = false;
         bool displayTiming = false;

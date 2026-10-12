@@ -11,6 +11,9 @@
 #include "plume_vulkan.h"
 
 #include <algorithm>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include <cmath>
 #include <climits>
 #include <cstdlib>
@@ -1554,7 +1557,12 @@ namespace plume {
 
         VkPipelineRasterizationStateCreateInfo rasterization = {};
         rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterization.depthClampEnable = !desc.depthClipEnabled;
+        // Depth clipped, never clamped, on a driver that clamps to [minDepth, maxDepth]
+        // as given when the range is reversed (1, 0): every fragment came out at 1.0,
+        // the depth test let each draw over the one before, and on an Adreno 512 the
+        // garage drew over the car. PLUME_NO_DEPTH_CLAMP=1 does the same anywhere.
+        static const bool noDepthClamp = []() { const char *v = getenv("PLUME_NO_DEPTH_CLAMP"); return v != nullptr && *v != '0'; }();
+        rasterization.depthClampEnable = !desc.depthClipEnabled && !noDepthClamp && !device->depthClampBroken;
         rasterization.rasterizerDiscardEnable = VK_FALSE;
         rasterization.polygonMode = toVk(desc.fillMode);
         rasterization.lineWidth = 1.0f;
@@ -4135,6 +4143,9 @@ namespace plume {
             VkPhysicalDeviceProperties chosenProperties = {};
             vkGetPhysicalDeviceProperties(physicalDevice, &chosenProperties);
             deviceApiVersion = chosenProperties.apiVersion;
+            // Qualcomm's Adreno 5xx driver clamps depth to a reversed viewport range
+            // as given (see VulkanGraphicsPipeline).
+            depthClampBroken = std::string(chosenProperties.deviceName).find("Adreno (TM) 5") != std::string::npos;
         }
 
         // Check for extensions.
@@ -4404,6 +4415,13 @@ namespace plume {
         createInfo.queueCreateInfoCount = uint32_t(queueCreateInfos.size());
         createInfo.ppEnabledExtensionNames = enabledExtensions.data();
         createInfo.enabledExtensionCount = uint32_t(enabledExtensions.size());
+        // PLUME_PORTABLE_CAPTURE=1: no compressed-texture features a desktop GPU
+        // lacks (ETC2, ASTC), so a RenderDoc capture taken on a phone replays on one -
+        // RenderDoc refuses a capture that enabled a feature the replaying GPU has not.
+        if (const char *portable = getenv("PLUME_PORTABLE_CAPTURE"); portable != nullptr && *portable != '0') {
+            deviceFeatures.features.textureCompressionETC2 = VK_FALSE;
+            deviceFeatures.features.textureCompressionASTC_LDR = VK_FALSE;
+        }
         createInfo.pEnabledFeatures = &deviceFeatures.features;
         pipelineStatisticsQuery = deviceFeatures.features.pipelineStatisticsQuery;
 
@@ -4427,6 +4445,25 @@ namespace plume {
             VK_API_VERSION_MINOR(physicalDeviceProperties.apiVersion), VK_API_VERSION_PATCH(physicalDeviceProperties.apiVersion),
             physicalDeviceProperties.driverVersion, int(deviceFeatures.features.shaderInt64), int(descriptorIndexingSupported),
             int(bufferDeviceAddressSupported), vkGetBufferDeviceAddress == nullptr ? " (no vkGetBufferDeviceAddress)" : "");
+        {
+            // The limits an old phone GPU may fall short of: a draw that needs
+            // more than these is drawn wrongly, not refused.
+            const VkPhysicalDeviceLimits &l = physicalDeviceProperties.limits;
+            char text[512];
+            snprintf(text, sizeof(text),
+                "Vulkan limits: vertex attributes %u, bindings %u, attribute offset %u, binding stride %u; "
+                "per stage: sampled images %u, samplers %u, uniform buffers %u; per set: sampled images %u, samplers %u, uniform buffers %u; "
+                "uniform range %u, push constants %u, sets %u, colour attachments %u, 2D size %u\n",
+                l.maxVertexInputAttributes, l.maxVertexInputBindings, l.maxVertexInputAttributeOffset, l.maxVertexInputBindingStride,
+                l.maxPerStageDescriptorSampledImages, l.maxPerStageDescriptorSamplers, l.maxPerStageDescriptorUniformBuffers,
+                l.maxDescriptorSetSampledImages, l.maxDescriptorSetSamplers, l.maxDescriptorSetUniformBuffers,
+                l.maxUniformBufferRange, l.maxPushConstantsSize, l.maxBoundDescriptorSets, l.maxColorAttachments, l.maxImageDimension2D);
+            fputs(text, stderr);
+#ifdef __ANDROID__
+            // stderr goes nowhere on Android.
+            __android_log_write(ANDROID_LOG_INFO, "plume", text);
+#endif
+        }
 
         for (uint32_t i = 0; i < queueFamilyCount; i++) {
             for (uint32_t j = 0; j < queueFamilies[i].queues.size(); j++) {
@@ -4495,6 +4532,7 @@ namespace plume {
         // Fill capabilities.
         capabilities.geometryShader = deviceFeatures.features.geometryShader;
         capabilities.clipDistance = deviceFeatures.features.shaderClipDistance;
+        capabilities.textureCompressionBC = deviceFeatures.features.textureCompressionBC;
         capabilities.raytracing = rayTracingSupported;
         capabilities.raytracingStateUpdate = false;
         capabilities.sampleLocations = (sampleLocationProperties.sampleLocationSampleCounts != 0);

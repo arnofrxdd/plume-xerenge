@@ -442,6 +442,7 @@ namespace plume {
         VulkanInterface *renderInterface = nullptr;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
         uint32_t deviceApiVersion = VK_API_VERSION_1_0;  // the device's own, not the instance's
+        bool depthClampBroken = false;  // clamps to a reversed viewport depth range as given (Adreno 5xx)
         bool pipelineStatisticsQuery = false;
         VkPhysicalDeviceProperties physicalDeviceProperties = {};
         VmaAllocator allocator = VK_NULL_HANDLE;
