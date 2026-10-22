@@ -1435,7 +1435,7 @@ namespace plume {
         pipelineInfo.layout = pipelineLayout->vk;
         pipelineInfo.stage = stageInfo;
 
-        VkResult res = vkCreateComputePipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
+        VkResult res = vkCreateComputePipelines(device->vk, device->pipelineCache, 1, &pipelineInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
             fprintf(stderr, "vkCreateComputePipelines failed with error code 0x%X.\n", res);
             return;
@@ -1702,7 +1702,7 @@ namespace plume {
         pipelineInfo.layout = pipelineLayout->vk;
         pipelineInfo.renderPass = renderPass;
 
-        VkResult res = vkCreateGraphicsPipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
+        VkResult res = vkCreateGraphicsPipelines(device->vk, device->pipelineCache, 1, &pipelineInfo, nullptr, &vk);
         if (res != VK_SUCCESS) {
             fprintf(stderr, "vkCreateGraphicsPipelines failed with error code 0x%X.\n", res);
             return;
@@ -4857,6 +4857,11 @@ namespace plume {
     void VulkanDevice::release() {
         nullBuffer = nullptr; // force destruction before destroying allocator
 
+        if (pipelineCache != VK_NULL_HANDLE) {
+            vkDestroyPipelineCache(vk, pipelineCache, nullptr);
+            pipelineCache = VK_NULL_HANDLE;
+        }
+
         if (allocator != VK_NULL_HANDLE) {
             vmaDestroyAllocator(allocator);
             allocator = VK_NULL_HANDLE;
@@ -4866,6 +4871,44 @@ namespace plume {
             vkDestroyDevice(vk, nullptr);
             vk = VK_NULL_HANDLE;
         }
+    }
+
+    bool VulkanDevice::loadPipelineCache(const void *data, size_t size) {
+        if (pipelineCache != VK_NULL_HANDLE) {
+            vkDestroyPipelineCache(vk, pipelineCache, nullptr);
+            pipelineCache = VK_NULL_HANDLE;
+        }
+
+        VkPipelineCacheCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        createInfo.initialDataSize = data != nullptr ? size : 0;
+        createInfo.pInitialData = data;
+        if (vkCreatePipelineCache(vk, &createInfo, nullptr, &pipelineCache) == VK_SUCCESS) {
+            return true;
+        }
+
+        // Data the driver would not take at all: an empty cache instead.
+        createInfo.initialDataSize = 0;
+        createInfo.pInitialData = nullptr;
+        return vkCreatePipelineCache(vk, &createInfo, nullptr, &pipelineCache) == VK_SUCCESS;
+    }
+
+    std::vector<uint8_t> VulkanDevice::pipelineCacheData() const {
+        std::vector<uint8_t> data;
+        size_t size = 0;
+        if (pipelineCache == VK_NULL_HANDLE || vkGetPipelineCacheData(vk, pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0) {
+            return data;
+        }
+
+        data.resize(size);
+        if (vkGetPipelineCacheData(vk, pipelineCache, &size, data.data()) != VK_SUCCESS) {
+            data.clear();
+        }
+        else {
+            data.resize(size);
+        }
+
+        return data;
     }
 
     bool VulkanDevice::isValid() const {
