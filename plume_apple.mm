@@ -7,6 +7,9 @@
 
 #include "plume_apple.h"
 
+#include <TargetConditionals.h>
+#if !TARGET_OS_IPHONE
+
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
@@ -176,3 +179,20 @@ namespace plume {
         }
     }
 }
+#else
+
+namespace plume {
+    RenderDeviceVendor getRenderDeviceVendor(uint64_t registryID) {
+        return RenderDeviceVendor::APPLE;
+    }
+
+    CocoaWindow::CocoaWindow(void* window) : windowHandle(window), cachedRefreshRate(60) {}
+    CocoaWindow::~CocoaWindow() {}
+    void CocoaWindow::getWindowAttributes(CocoaWindowAttributes* attributes) const {
+        if (attributes) *attributes = {0, 0, 1920, 1080};
+    }
+    int CocoaWindow::getRefreshRate() const { return 60; }
+    void CocoaWindow::toggleFullscreen() {}
+}
+
+#endif
