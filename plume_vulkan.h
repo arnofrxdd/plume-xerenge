@@ -455,6 +455,10 @@ namespace plume {
         std::unique_ptr<RenderBuffer> nullBuffer;
         bool loadStoreOpNoneSupported = false;
         bool nullDescriptorSupported = false;
+        // The driver's compiled pipelines, kept between runs by the caller
+        // (loadPipelineCache at start, pipelineCacheData to save): a pipeline met
+        // before is then made from it instead of compiled again.
+        VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 
         VulkanDevice(VulkanInterface *renderInterface, const std::string &preferredDeviceName);
         ~VulkanDevice() override;
@@ -483,6 +487,11 @@ namespace plume {
         RenderSampleCounts getSampleCountsSupported(RenderFormat format) const override;
         void release();
         bool isValid() const;
+        // The cache made anew from data a pipelineCacheData gave (the driver drops
+        // what is not its own, as from another GPU or driver version); false when
+        // it could not be made at all.
+        bool loadPipelineCache(const void *data, size_t size);
+        std::vector<uint8_t> pipelineCacheData() const;
         bool beginCapture() override;
         bool endCapture() override;
     };
